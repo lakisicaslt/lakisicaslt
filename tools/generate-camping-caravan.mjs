@@ -187,22 +187,30 @@ for (const w of weeks) {
   `;
 
   // Render contribution cells
-  let rects = "";
-  for (let x = 0; x < W; x++) {
-    const days = weeks[x].contributionDays;
-    for (let y = 0; y < 7; y++) {
-      const day = days[y];
-      const lvl = levelFor(day.contributionCount, thresholds);
-      const fill = [p.grid0, p.grid1, p.grid2, p.grid3, p.grid4][lvl];
+ let rects = "";
+for (let x = 0; x < W; x++) {
+  const days = weeks[x].contributionDays || [];
 
-      const rx = pad + x * (cell + gap);
-      const ry = pad + y * (cell + gap);
+  for (let y = 0; y < 7; y++) {
+    const day = days[y];
 
-      rects += `<rect x="${rx}" y="${ry}" width="${cell}" height="${cell}" rx="3" ry="3" fill="${fill}">
+    const rx = pad + x * (cell + gap);
+    const ry = pad + y * (cell + gap);
+
+    // Ako GitHub vrati nedelju sa manje od 7 dana, nacrtaj "prazan" cell
+    if (!day) {
+      rects += `<rect x="${rx}" y="${ry}" width="${cell}" height="${cell}" rx="3" ry="3" fill="${p.grid0}"></rect>\n`;
+      continue;
+    }
+
+    const lvl = levelFor(day.contributionCount, thresholds);
+    const fill = [p.grid0, p.grid1, p.grid2, p.grid3, p.grid4][lvl];
+
+    rects += `<rect x="${rx}" y="${ry}" width="${cell}" height="${cell}" rx="3" ry="3" fill="${fill}">
   <title>${escapeXml(day.date)} • ${day.contributionCount} contributions</title>
 </rect>\n`;
-    }
   }
+}
 
   // Trail line: draw the path with animated dash (gives “moving” feel)
   // plus the caravan moving along the same path.

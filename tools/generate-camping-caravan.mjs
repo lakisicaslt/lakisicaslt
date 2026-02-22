@@ -87,8 +87,11 @@ function svgForTheme(calendar, theme) {
   const height = pad * 2 + 7 * (cell + gap) - gap;
 
   const counts = [];
-  for (const w of weeks) for (const d of w.contributionDays) counts.push(d.contributionCount);
-  const thresholds = buildThresholds(counts);
+for (const w of weeks) {
+  for (const d of (w.contributionDays || [])) {
+    if (d && typeof d.contributionCount === "number") counts.push(d.contributionCount);
+  }
+}  const thresholds = buildThresholds(counts);
 
   const palettes = {
     dark: {
@@ -120,17 +123,21 @@ function svgForTheme(calendar, theme) {
   // Collect "active" points in chronological order (date ascending)
   const points = [];
   for (let x = 0; x < W; x++) {
-    const days = weeks[x].contributionDays;
-    for (let y = 0; y < 7; y++) {
-      const day = days[y];
-      points.push({
-        date: day.date,
-        count: day.contributionCount,
-        x,
-        y,
-      });
-    }
+  const days = weeks[x].contributionDays || [];
+
+  // GitHub ponekad vrati <7 dana u nedelji na početku/kraju perioda
+  for (let y = 0; y < 7; y++) {
+    const day = days[y];
+    if (!day) continue; // skip missing slots
+
+    points.push({
+      date: day.date,
+      count: day.contributionCount,
+      x,
+      y,
+    });
   }
+}
 
   points.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 

@@ -51,9 +51,9 @@ function buildThresholds(counts) {
   const nz = counts.filter((c) => c > 0).sort((a, b) => a - b);
   if (nz.length === 0) return [0, 1, 2, 3];
   const q1 = Math.max(1, Math.round(quantile(nz, 0.25)));
-  const q2 = Math.max(q1 + 1, Math.round(quantile(nz, 0.50)));
+  const q2 = Math.max(q1 + 1, Math.round(quantile(nz, 0.5)));
   const q3 = Math.max(q2 + 1, Math.round(quantile(nz, 0.75)));
-  const q4 = Math.max(q3 + 1, Math.round(quantile(nz, 0.90)));
+  const q4 = Math.max(q3 + 1, Math.round(quantile(nz, 0.9)));
   return [q1, q2, q3, q4];
 }
 
@@ -74,7 +74,7 @@ function escapeXml(s) {
     .replaceAll("'", "&apos;");
 }
 
-// pick a few "campfire" cells: prefer lvl>=3, then lvl>=2
+// pick a few "campfire" cells: prefer lvl>=3, then lvl==2
 function pickCampfires(highCells, max = 4) {
   const lvl3 = highCells.filter((c) => c.lvl >= 3);
   const lvl2 = highCells.filter((c) => c.lvl === 2);
@@ -109,7 +109,7 @@ function svgForTheme(calendar, theme) {
   // Collect counts for thresholds
   const counts = [];
   for (const w of weeks) {
-    for (const d of (w.contributionDays || [])) {
+    for (const d of w.contributionDays || []) {
       if (d && typeof d.contributionCount === "number") counts.push(d.contributionCount);
     }
   }
@@ -125,8 +125,8 @@ function svgForTheme(calendar, theme) {
       grid4: "#39d353",
       text: "#c9d1d9",
       path: "rgba(255,255,255,0.10)",
-      dash: "rgba(57,211,83,0.55)",
-      dashGlow: "rgba(57,211,83,0.25)",
+      dash: "rgba(57,211,83,0.58)",
+      dashGlow: "rgba(57,211,83,0.22)",
       hiker: "#c9d1d9",
       tent: "#c9d1d9",
       tentFill: "rgba(31,111,235,0.35)",
@@ -143,7 +143,7 @@ function svgForTheme(calendar, theme) {
       grid4: "#216e39",
       text: "#24292f",
       path: "rgba(0,0,0,0.10)",
-      dash: "rgba(48,161,78,0.55)",
+      dash: "rgba(48,161,78,0.58)",
       dashGlow: "rgba(48,161,78,0.20)",
       hiker: "#24292f",
       tent: "#24292f",
@@ -199,7 +199,8 @@ function svgForTheme(calendar, theme) {
 
   const pathD = "M " + points.map((pt) => `${pt.px.toFixed(2)} ${pt.py.toFixed(2)}`).join(" L ");
 
-  const durationSec = Math.min(26, Math.max(14, Math.round((W * 7) / 20)));
+  // Slower + smoother
+  const durationSec = Math.min(48, Math.max(28, Math.round((W * 7) / 12)));
 
   // Final cell (tent)
   const end = points[points.length - 1];
@@ -213,20 +214,35 @@ function svgForTheme(calendar, theme) {
     return { cx, cy, idx };
   });
 
-  // Hiker icon (simple, readable): head + body + backpack + trekking pole
+  // Hiker icon (cleaner + slightly bolder + subtle shadow)
   const hikerIcon = `
-    <g id="hiker" transform="translate(-8,-10)" stroke="${p.hiker}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none">
-      <circle cx="8" cy="4.5" r="2.1" fill="${p.hiker}" stroke="none" opacity="0.95"/>
-      <path d="M8 7.2v5.3" />
-      <path d="M8 10.2l-3.2 2.3" />
-      <path d="M8 10.2l3.1 2.0" />
-      <path d="M8 12.5l-2.6 5.2" />
-      <path d="M8 12.5l2.9 5.2" />
+    <g id="hiker" transform="translate(-9,-11)" stroke="${p.hiker}" stroke-width="1.7"
+       stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <!-- subtle shadow -->
+      <g opacity="0.18" transform="translate(0.8,0.8)">
+        <circle cx="9" cy="5" r="2.2" fill="${p.hiker}" stroke="none"/>
+        <path d="M9 7.6v5.6" />
+        <path d="M9 10.7l-3.6 2.6" />
+        <path d="M9 10.7l3.4 2.3" />
+        <path d="M9 13.2l-2.9 5.4" />
+        <path d="M9 13.2l3.2 5.4" />
+        <path d="M11.9 9.2c1.5.6 2.3 1.9 2.3 3.6v2.6c0 .6-.5 1.1-1.1 1.1h-1.2" />
+        <path d="M3.6 13.0v7.2" />
+        <path d="M2.9 20.2h1.6" />
+      </g>
+
+      <!-- main -->
+      <circle cx="9" cy="5" r="2.2" fill="${p.hiker}" stroke="none" opacity="0.95"/>
+      <path d="M9 7.6v5.6" />
+      <path d="M9 10.7l-3.6 2.6" />
+      <path d="M9 10.7l3.4 2.3" />
+      <path d="M9 13.2l-2.9 5.4" />
+      <path d="M9 13.2l3.2 5.4" />
       <!-- backpack -->
-      <path d="M10.6 8.8c1.3.5 2.0 1.6 2.0 3.0v2.3c0 .5-.4.9-.9.9h-1.1" />
+      <path d="M11.9 9.2c1.5.6 2.3 1.9 2.3 3.6v2.6c0 .6-.5 1.1-1.1 1.1h-1.2" />
       <!-- trekking pole -->
-      <path d="M3.2 12.5l0 7.0" />
-      <path d="M2.5 19.5h1.4" />
+      <path d="M3.6 13.0v7.2" />
+      <path d="M2.9 20.2h1.6" />
     </g>
   `;
 
@@ -240,7 +256,6 @@ function svgForTheme(calendar, theme) {
   `;
 
   // Campfire + smoke
-  // Each fire has 3 smoke puffs rising & fading, looped.
   function fireGroup(cx, cy, idx) {
     const id = `fire${idx}`;
     const delay = (idx * 0.4).toFixed(2);
@@ -279,10 +294,13 @@ function svgForTheme(calendar, theme) {
 
   const firesSvg = fires.map((f) => fireGroup(f.cx, f.cy, f.idx)).join("\n");
 
-  // SVG
+  // SVG (note: motionPath is in defs for better compatibility)
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"
-     viewBox="0 0 ${width} ${height}" role="img" aria-label="Camping trail with hiker, campfires, and tent">
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="${width}" height="${height}"
+     viewBox="0 0 ${width} ${height}"
+     role="img" aria-label="Camping trail with hiker, campfires, and tent">
   <defs>
     <filter id="softGlow">
       <feGaussianBlur stdDeviation="1.6" result="b"/>
@@ -291,6 +309,8 @@ function svgForTheme(calendar, theme) {
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
+
+    <path id="motionPath" d="${pathD}" />
   </defs>
 
   <rect width="100%" height="100%" fill="${p.bg}" rx="12" />
@@ -303,11 +323,30 @@ function svgForTheme(calendar, theme) {
   <!-- Context path (subtle) -->
   <path d="${pathD}" fill="none" stroke="${p.path}" stroke-width="1.6" stroke-linecap="round" />
 
-  <!-- Animated highlight dash (snake-like vibe) -->
-  <path d="${pathD}" fill="none" stroke="${p.dash}" stroke-width="2.6" stroke-linecap="round"
-        stroke-dasharray="18 140" filter="url(#softGlow)">
-    <animate attributeName="stroke-dashoffset" values="0; -9000" dur="${durationSec}s" repeatCount="indefinite"/>
-  </path>
+  <!-- Animated snake (tail + head) -->
+  <g filter="url(#softGlow)">
+    <!-- tail -->
+    <path d="${pathD}" fill="none" stroke="${p.dashGlow}" stroke-width="3.2" stroke-linecap="round"
+          stroke-dasharray="38 240" opacity="0.9">
+      <animate attributeName="stroke-dashoffset"
+               values="0; -9000"
+               dur="${durationSec}s"
+               repeatCount="indefinite"
+               calcMode="spline"
+               keySplines="0.42 0 0.58 1"/>
+    </path>
+
+    <!-- head -->
+    <path d="${pathD}" fill="none" stroke="${p.dash}" stroke-width="3.0" stroke-linecap="round"
+          stroke-dasharray="16 280" opacity="1.0">
+      <animate attributeName="stroke-dashoffset"
+               values="0; -9000"
+               dur="${durationSec}s"
+               repeatCount="indefinite"
+               calcMode="spline"
+               keySplines="0.42 0 0.58 1"/>
+    </path>
+  </g>
 
   <!-- Campfires with smoke -->
   <g>
@@ -319,17 +358,20 @@ function svgForTheme(calendar, theme) {
     ${tentIcon}
   </g>
 
-  <!-- Hiker moving along the snake path -->
+  <!-- Hiker moving along the path (top layer) -->
   <g>
     ${hikerIcon}
-    <use href="#hiker">
-      <animateMotion dur="${durationSec}s" repeatCount="indefinite" rotate="auto">
-        <mpath href="#motionPath"/>
+    <use href="#hiker" xlink:href="#hiker">
+      <animateMotion dur="${durationSec}s"
+                     repeatCount="indefinite"
+                     rotate="auto"
+                     calcMode="spline"
+                     keyTimes="0;1"
+                     keySplines="0.42 0 0.58 1">
+        <mpath href="#motionPath" xlink:href="#motionPath"/>
       </animateMotion>
     </use>
   </g>
-
-  <path id="motionPath" d="${pathD}" fill="none" stroke="none"/>
 
   <text x="${pad}" y="${height - 8}"
         font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial"

@@ -1,6 +1,6 @@
 // tools/generate-camping-caravan.mjs
-// Generates animated SVG "camping caravan" over GitHub contribution calendar.
-// Output:
+// Snake-like animated camper van over GitHub contribution grid.
+// Outputs:
 //   dist/assets/camping-caravan-dark.svg
 //   dist/assets/camping-caravan-light.svg
 
@@ -23,7 +23,7 @@ async function gql(query, variables) {
     headers: {
       "Content-Type": "application/json",
       Authorization: `bearer ${TOKEN}`,
-      "User-Agent": "camping-caravan-generator",
+      "User-Agent": "camping-camper-van-generator",
     },
     body: JSON.stringify({ query, variables }),
   });
@@ -45,9 +45,7 @@ function quantile(sorted, q) {
 
 function buildThresholds(counts) {
   const nz = counts.filter((c) => c > 0).sort((a, b) => a - b);
-  if (nz.length === 0) return [0, 1, 2, 3]; // fallback
-
-  // Use quartiles of non-zero days to approximate GitHub intensity levels
+  if (nz.length === 0) return [0, 1, 2, 3];
   const q1 = Math.max(1, Math.round(quantile(nz, 0.25)));
   const q2 = Math.max(q1 + 1, Math.round(quantile(nz, 0.50)));
   const q3 = Math.max(q2 + 1, Math.round(quantile(nz, 0.75)));
@@ -56,7 +54,6 @@ function buildThresholds(counts) {
 }
 
 function levelFor(count, t) {
-  // 0..4
   if (count <= 0) return 0;
   if (count <= t[0]) return 1;
   if (count <= t[1]) return 2;
@@ -65,7 +62,7 @@ function levelFor(count, t) {
 }
 
 function escapeXml(s) {
-  return s
+  return String(s)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -74,11 +71,10 @@ function escapeXml(s) {
 }
 
 function svgForTheme(calendar, theme) {
-  // Calendar layout: weeks (columns) x 7 days (rows)
-  // We'll render like GitHub: Sunday=0 at top.
-  const weeks = calendar.weeks;
+  const weeks = calendar.weeks || [];
   const W = weeks.length;
 
+  // Grid sizing (looks good on GitHub README)
   const cell = 12;
   const gap = 3;
   const pad = 18;
@@ -86,12 +82,14 @@ function svgForTheme(calendar, theme) {
   const width = pad * 2 + W * (cell + gap) - gap;
   const height = pad * 2 + 7 * (cell + gap) - gap;
 
+  // Collect counts to compute thresholds
   const counts = [];
-for (const w of weeks) {
-  for (const d of (w.contributionDays || [])) {
-    if (d && typeof d.contributionCount === "number") counts.push(d.contributionCount);
+  for (const w of weeks) {
+    for (const d of (w.contributionDays || [])) {
+      if (d && typeof d.contributionCount === "number") counts.push(d.contributionCount);
+    }
   }
-}  const thresholds = buildThresholds(counts);
+  const thresholds = buildThresholds(counts);
 
   const palettes = {
     dark: {
@@ -102,8 +100,14 @@ for (const w of weeks) {
       grid3: "#26a641",
       grid4: "#39d353",
       text: "#c9d1d9",
-      trail: "rgba(255,255,255,0.22)",
-      trailGlow: "rgba(57,211,83,0.35)",
+      trail: "rgba(255,255,255,0.12)",     // faint full path
+      dash: "rgba(57,211,83,0.55)",        // moving highlight
+      dashGlow: "rgba(57,211,83,0.28)",
+      vanBody: "#c9d1d9",
+      vanStroke: "rgba(0,0,0,0.30)",
+      vanAccent: "#1f6feb",
+      vanWindow: "rgba(13,17,23,0.85)",
+      vanLight: "rgba(255, 224, 128, 0.85)",
     },
     light: {
       bg: "#ffffff",
@@ -113,115 +117,114 @@ for (const w of weeks) {
       grid3: "#30a14e",
       grid4: "#216e39",
       text: "#24292f",
-      trail: "rgba(0,0,0,0.18)",
-      trailGlow: "rgba(48,161,78,0.25)",
+      trail: "rgba(0,0,0,0.10)",
+      dash: "rgba(48,161,78,0.55)",
+      dashGlow: "rgba(48,161,78,0.22)",
+      vanBody: "#24292f",
+      vanStroke: "rgba(0,0,0,0.28)",
+      vanAccent: "#0969da",
+      vanWindow: "rgba(255,255,255,0.80)",
+      vanLight: "rgba(255, 224, 128, 0.70)",
     },
   };
 
   const p = palettes[theme];
 
-  // Collect "active" points in chronological order (date ascending)
+  // Draw contribution grid (handles partial weeks by drawing empties)
+  let rects = "";
+  let highCells = []; // for optional trees/markers
+
+  for (let x = 0; x < W; x++) {
+    const days = weeks[x].contributionDays || [];
+
+    for (let y = 0; y < 7; y++) {
+      const day = days[y];
+
+      const rx = pad + x * (cell + gap);
+      const ry = pad + y * (cell + gap);
+
+      if (!day) {
+        rects += `<rect x="${rx}" y="${ry}" width="${cell}" height="${cell}" rx="3" ry="3" fill="${p.grid0}"></rect>\n`;
+        continue;
+      }
+
+      const lvl = levelFor(day.contributionCount, thresholds);
+      const fill = [p.grid0, p.grid1, p.grid2, p.grid3, p.grid4][lvl];
+
+      // collect some “camp vibe” points from higher activity cells
+      if (lvl >= 3) {
+        highCells.push({ x, y, lvl, date: day.date, count: day.contributionCount });
+      }
+
+      rects += `<rect x="${rx}" y="${ry}" width="${cell}" height="${cell}" rx="3" ry="3" fill="${fill}">
+  <title>${escapeXml(day.date)} • ${day.contributionCount} contributions</title>
+</rect>\n`;
+    }
+  }
+
+  // Build a SNAKE path across the entire grid (no diagonals):
+  // column 0 top->bottom, column 1 bottom->top, etc.
   const points = [];
   for (let x = 0; x < W; x++) {
-  const days = weeks[x].contributionDays || [];
-
-  // GitHub ponekad vrati <7 dana u nedelji na početku/kraju perioda
-  for (let y = 0; y < 7; y++) {
-    const day = days[y];
-    if (!day) continue; // skip missing slots
-
-    points.push({
-      date: day.date,
-      count: day.contributionCount,
-      x,
-      y,
-    });
+    const ys = x % 2 === 0 ? [0,1,2,3,4,5,6] : [6,5,4,3,2,1,0];
+    for (const y of ys) {
+      const px = pad + x * (cell + gap) + cell / 2;
+      const py = pad + y * (cell + gap) + cell / 2;
+      points.push({ px, py });
+    }
   }
-}
 
-  points.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const pathD = "M " + points.map((pt) => `${pt.px.toFixed(2)} ${pt.py.toFixed(2)}`).join(" L ");
 
-  // Use last N active (count>0) days for trail. Keeps animation nice.
-  const active = points.filter((pt) => pt.count > 0);
-  const N = 90;
-  const trailPts = (active.length > N ? active.slice(active.length - N) : active);
+  // Duration: longer grid => longer animation, but keep within nice bounds
+  const durationSec = Math.min(26, Math.max(14, Math.round((W * 7) / 20)));
 
-  // If no activity, do a small loop in the middle so SVG still animates
-  const fallbackMidX = Math.floor(W / 2);
-  const fallback = [
-    { x: fallbackMidX, y: 3 },
-    { x: fallbackMidX + 1, y: 3 },
-    { x: fallbackMidX + 1, y: 4 },
-    { x: fallbackMidX, y: 4 },
-    { x: fallbackMidX, y: 3 },
-  ];
+  // Small set of “camp” markers: a few trees on high-activity cells
+  // Keep it sparse so it stays clean.
+  const maxTrees = 10;
+  highCells = highCells.slice(-maxTrees);
 
-  const animPts = (trailPts.length >= 2 ? trailPts : fallback).map((pt) => {
-    const px = pad + pt.x * (cell + gap) + cell / 2;
-    const py = pad + pt.y * (cell + gap) + cell / 2;
-    return { px, py };
-  });
+  const trees = highCells
+    .map(({ x, y }) => {
+      const cx = pad + x * (cell + gap) + cell / 2;
+      const cy = pad + y * (cell + gap) + cell / 2;
+      return `<text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="10" opacity="0.65">🌲</text>`;
+    })
+    .join("\n");
 
-  // Build path "M x y L x y ..."
-  const pathD =
-    "M " +
-    animPts
-      .map((pt, i) => `${pt.px.toFixed(2)} ${pt.py.toFixed(2)}`.trim())
-      .join(" L ");
-
-  // Animation duration scales slightly with path length
-  const durationSec = Math.min(18, Math.max(8, Math.round(animPts.length * 0.18)));
-
-  // Caravan icon (tiny camper van) as SVG paths
-  // It's intentionally simple so it scales cleanly.
-  const caravan = `
-    <g id="caravan" transform="translate(-7,-6)">
-      <path d="M2 8.5c0-1.4 1.1-2.5 2.5-2.5h6.2c1 0 1.9.6 2.3 1.5l.9 2h2.1c1 0 1.9.8 1.9 1.9v2.1c0 .9-.7 1.6-1.6 1.6H17" fill="${p.text}" opacity="0.95"/>
-      <path d="M4.2 6h6.3c.7 0 1.3.4 1.6 1l.9 2H3.7V6.5c0-.3.2-.5.5-.5z" fill="${theme === "dark" ? "#1f6feb" : "#0969da"}" opacity="0.9"/>
-      <circle cx="6" cy="15" r="1.7" fill="${p.bg}" opacity="0.95"/>
-      <circle cx="6" cy="15" r="1.1" fill="${p.text}" opacity="0.95"/>
-      <circle cx="14.2" cy="15" r="1.7" fill="${p.bg}" opacity="0.95"/>
-      <circle cx="14.2" cy="15" r="1.1" fill="${p.text}" opacity="0.95"/>
-      <path d="M2.6 13.2h14.8" stroke="${p.bg}" stroke-width="1" opacity="0.35"/>
+  // Camper van icon (actually looks like a camper van: body, roof, window, door, wheels, headlight)
+  // Drawn around (0,0); we’ll offset via translate and animateMotion.
+  const camperVan = `
+    <g id="camper-van" transform="translate(-11,-9)">
+      <!-- Body -->
+      <path d="M3 12.2c0-2 1.6-3.6 3.6-3.6h9.2c1.5 0 2.8.9 3.4 2.3l1.1 2.4h2.7c1.5 0 2.8 1.2 2.8 2.8v2.8c0 1.2-1 2.2-2.2 2.2H24.8"
+            fill="${p.vanBody}" opacity="0.92" stroke="${p.vanStroke}" stroke-width="0.6" stroke-linejoin="round"/>
+      <!-- Roof / pop-top -->
+      <path d="M7.2 7.6h7.4c1.1 0 2 .9 2 2v1.1H5.2V9.6c0-1.1.9-2 2-2z"
+            fill="${p.vanAccent}" opacity="0.92" stroke="${p.vanStroke}" stroke-width="0.6" stroke-linejoin="round"/>
+      <!-- Window -->
+      <path d="M7.0 11.0h7.6c.6 0 1.1.5 1.1 1.1v2.1H5.9v-2.1c0-.6.5-1.1 1.1-1.1z"
+            fill="${p.vanWindow}" opacity="0.90"/>
+      <!-- Door line -->
+      <path d="M13.3 11.0v6.2" stroke="${p.vanStroke}" stroke-width="0.7" opacity="0.55"/>
+      <!-- Wheels -->
+      <circle cx="9.0" cy="20.4" r="2.4" fill="${p.bg}" opacity="0.96"/>
+      <circle cx="9.0" cy="20.4" r="1.5" fill="${p.vanBody}" opacity="0.92"/>
+      <circle cx="19.2" cy="20.4" r="2.4" fill="${p.bg}" opacity="0.96"/>
+      <circle cx="19.2" cy="20.4" r="1.5" fill="${p.vanBody}" opacity="0.92"/>
+      <!-- Headlight -->
+      <circle cx="24.8" cy="17.4" r="0.9" fill="${p.vanLight}" opacity="0.9"/>
     </g>
   `;
 
-  // Render contribution cells
- let rects = "";
-for (let x = 0; x < W; x++) {
-  const days = weeks[x].contributionDays || [];
-
-  for (let y = 0; y < 7; y++) {
-    const day = days[y];
-
-    const rx = pad + x * (cell + gap);
-    const ry = pad + y * (cell + gap);
-
-    // Ako GitHub vrati nedelju sa manje od 7 dana, nacrtaj "prazan" cell
-    if (!day) {
-      rects += `<rect x="${rx}" y="${ry}" width="${cell}" height="${cell}" rx="3" ry="3" fill="${p.grid0}"></rect>\n`;
-      continue;
-    }
-
-    const lvl = levelFor(day.contributionCount, thresholds);
-    const fill = [p.grid0, p.grid1, p.grid2, p.grid3, p.grid4][lvl];
-
-    rects += `<rect x="${rx}" y="${ry}" width="${cell}" height="${cell}" rx="3" ry="3" fill="${fill}">
-  <title>${escapeXml(day.date)} • ${day.contributionCount} contributions</title>
-</rect>\n`;
-  }
-}
-
-  // Trail line: draw the path with animated dash (gives “moving” feel)
-  // plus the caravan moving along the same path.
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"
-     viewBox="0 0 ${width} ${height}" role="img" aria-label="Camping caravan activity trail">
+     viewBox="0 0 ${width} ${height}" role="img" aria-label="Camping camper van activity trail">
   <defs>
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="1.8" result="coloredBlur"/>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="1.6" result="b"/>
       <feMerge>
-        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="b"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
@@ -234,38 +237,40 @@ for (let x = 0; x < W; x++) {
     ${rects}
   </g>
 
-  <!-- Animated trail -->
+  <!-- Subtle trees (camp vibe) -->
   <g>
-    <path d="${pathD}" fill="none" stroke="${p.trail}" stroke-width="2.2" stroke-linecap="round"
-          stroke-dasharray="6 8">
-      <animate attributeName="stroke-dashoffset" values="0; -56" dur="${durationSec}s" repeatCount="indefinite"/>
-    </path>
-
-    <path d="${pathD}" fill="none" stroke="${p.trailGlow}" stroke-width="3.4" stroke-linecap="round"
-          opacity="0.55" filter="url(#glow)" stroke-dasharray="10 16">
-      <animate attributeName="stroke-dashoffset" values="0; -104" dur="${durationSec}s" repeatCount="indefinite"/>
-    </path>
+    ${trees}
   </g>
 
-  <!-- Caravan moving along trail -->
+  <!-- Full snake path (very faint, just for context) -->
+  <path d="${pathD}" fill="none" stroke="${p.trail}" stroke-width="1.6" stroke-linecap="round" />
+
+  <!-- Moving highlight dash (the “animated trail”) -->
+  <path d="${pathD}" fill="none" stroke="${p.dash}" stroke-width="2.6" stroke-linecap="round"
+        stroke-dasharray="16 120" filter="url(#softGlow)">
+    <animate attributeName="stroke-dashoffset" values="0; -9000" dur="${durationSec}s" repeatCount="indefinite"/>
+  </path>
+
+  <!-- Camper van moving along the snake path -->
   <g>
-    ${caravan}
-    <use href="#caravan">
+    ${camperVan}
+    <use href="#camper-van">
       <animateMotion dur="${durationSec}s" repeatCount="indefinite" rotate="auto">
         <mpath href="#motionPath"/>
       </animateMotion>
     </use>
-
-    <path id="motionPath" d="${pathD}" fill="none" stroke="none"/>
   </g>
 
-  <!-- Caption -->
-  <text x="${pad}" y="${height - 8}" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial"
+  <path id="motionPath" d="${pathD}" fill="none" stroke="none"/>
+
+  <text x="${pad}" y="${height - 8}"
+        font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial"
         font-size="12" fill="${p.text}" opacity="0.85">
     🏕️ ${LOGIN} • camping trail
   </text>
 </svg>
 `;
+
   return svg;
 }
 
@@ -296,8 +301,7 @@ async function main() {
   fs.writeFileSync(path.join(OUT_DIR, "camping-caravan-dark.svg"), darkSvg, "utf8");
   fs.writeFileSync(path.join(OUT_DIR, "camping-caravan-light.svg"), lightSvg, "utf8");
 
-  console.log("Generated:", path.join("dist", "assets", "camping-caravan-dark.svg"));
-  console.log("Generated:", path.join("dist", "assets", "camping-caravan-light.svg"));
+  console.log("Generated SVGs in dist/assets/");
 }
 
 main().catch((e) => {

@@ -1,5 +1,7 @@
 // tools/generate-camping-caravan.mjs
-// Snake-like animated camper van over GitHub contribution grid.
+// Snake-like "hiker" animation across GitHub contributions grid,
+// with a tent at the final cell + campfires with smoke.
+//
 // Outputs:
 //   dist/assets/camping-caravan-dark.svg
 //   dist/assets/camping-caravan-light.svg
@@ -9,6 +11,7 @@ import path from "path";
 
 const LOGIN = process.env.GITHUB_LOGIN || "lakisicaslt";
 const TOKEN = process.env.GITHUB_TOKEN;
+
 if (!TOKEN) {
   console.error("Missing GITHUB_TOKEN env var.");
   process.exit(1);
@@ -23,10 +26,11 @@ async function gql(query, variables) {
     headers: {
       "Content-Type": "application/json",
       Authorization: `bearer ${TOKEN}`,
-      "User-Agent": "camping-camper-van-generator",
+      "User-Agent": "camping-hiker-generator",
     },
     body: JSON.stringify({ query, variables }),
   });
+
   const json = await res.json();
   if (!res.ok || json.errors) {
     console.error(JSON.stringify(json, null, 2));
@@ -70,11 +74,31 @@ function escapeXml(s) {
     .replaceAll("'", "&apos;");
 }
 
+// pick a few "campfire" cells: prefer lvl>=3, then lvl>=2
+function pickCampfires(highCells, max = 4) {
+  const lvl3 = highCells.filter((c) => c.lvl >= 3);
+  const lvl2 = highCells.filter((c) => c.lvl === 2);
+
+  const picked = [];
+  // take from the most recent activity (end of list is recent)
+  for (let i = lvl3.length - 1; i >= 0 && picked.length < max; i--) picked.push(lvl3[i]);
+  for (let i = lvl2.length - 1; i >= 0 && picked.length < max; i--) picked.push(lvl2[i]);
+
+  // ensure unique x,y
+  const seen = new Set();
+  return picked.filter((c) => {
+    const k = `${c.x},${c.y}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 function svgForTheme(calendar, theme) {
   const weeks = calendar.weeks || [];
   const W = weeks.length;
 
-  // Grid sizing (looks good on GitHub README)
+  // Sizing
   const cell = 12;
   const gap = 3;
   const pad = 18;
@@ -82,7 +106,7 @@ function svgForTheme(calendar, theme) {
   const width = pad * 2 + W * (cell + gap) - gap;
   const height = pad * 2 + 7 * (cell + gap) - gap;
 
-  // Collect counts to compute thresholds
+  // Collect counts for thresholds
   const counts = [];
   for (const w of weeks) {
     for (const d of (w.contributionDays || [])) {
@@ -100,14 +124,15 @@ function svgForTheme(calendar, theme) {
       grid3: "#26a641",
       grid4: "#39d353",
       text: "#c9d1d9",
-      trail: "rgba(255,255,255,0.12)",     // faint full path
-      dash: "rgba(57,211,83,0.55)",        // moving highlight
-      dashGlow: "rgba(57,211,83,0.28)",
-      vanBody: "#c9d1d9",
-      vanStroke: "rgba(0,0,0,0.30)",
-      vanAccent: "#1f6feb",
-      vanWindow: "rgba(13,17,23,0.85)",
-      vanLight: "rgba(255, 224, 128, 0.85)",
+      path: "rgba(255,255,255,0.10)",
+      dash: "rgba(57,211,83,0.55)",
+      dashGlow: "rgba(57,211,83,0.25)",
+      hiker: "#c9d1d9",
+      tent: "#c9d1d9",
+      tentFill: "rgba(31,111,235,0.35)",
+      fire1: "#ffb74d",
+      fire2: "#ff7043",
+      smoke: "rgba(255,255,255,0.55)",
     },
     light: {
       bg: "#ffffff",
@@ -117,26 +142,26 @@ function svgForTheme(calendar, theme) {
       grid3: "#30a14e",
       grid4: "#216e39",
       text: "#24292f",
-      trail: "rgba(0,0,0,0.10)",
+      path: "rgba(0,0,0,0.10)",
       dash: "rgba(48,161,78,0.55)",
-      dashGlow: "rgba(48,161,78,0.22)",
-      vanBody: "#24292f",
-      vanStroke: "rgba(0,0,0,0.28)",
-      vanAccent: "#0969da",
-      vanWindow: "rgba(255,255,255,0.80)",
-      vanLight: "rgba(255, 224, 128, 0.70)",
+      dashGlow: "rgba(48,161,78,0.20)",
+      hiker: "#24292f",
+      tent: "#24292f",
+      tentFill: "rgba(9,105,218,0.22)",
+      fire1: "#ff9800",
+      fire2: "#ff5722",
+      smoke: "rgba(0,0,0,0.35)",
     },
   };
 
   const p = palettes[theme];
 
-  // Draw contribution grid (handles partial weeks by drawing empties)
+  // Grid + collect high activity cells
   let rects = "";
-  let highCells = []; // for optional trees/markers
+  const highCells = [];
 
   for (let x = 0; x < W; x++) {
     const days = weeks[x].contributionDays || [];
-
     for (let y = 0; y < 7; y++) {
       const day = days[y];
 
@@ -151,8 +176,7 @@ function svgForTheme(calendar, theme) {
       const lvl = levelFor(day.contributionCount, thresholds);
       const fill = [p.grid0, p.grid1, p.grid2, p.grid3, p.grid4][lvl];
 
-      // collect some “camp vibe” points from higher activity cells
-      if (lvl >= 3) {
+      if (lvl >= 2) {
         highCells.push({ x, y, lvl, date: day.date, count: day.contributionCount });
       }
 
@@ -162,64 +186,103 @@ function svgForTheme(calendar, theme) {
     }
   }
 
-  // Build a SNAKE path across the entire grid (no diagonals):
-  // column 0 top->bottom, column 1 bottom->top, etc.
+  // Snake path through every cell (no diagonals)
   const points = [];
   for (let x = 0; x < W; x++) {
-    const ys = x % 2 === 0 ? [0,1,2,3,4,5,6] : [6,5,4,3,2,1,0];
+    const ys = x % 2 === 0 ? [0, 1, 2, 3, 4, 5, 6] : [6, 5, 4, 3, 2, 1, 0];
     for (const y of ys) {
       const px = pad + x * (cell + gap) + cell / 2;
       const py = pad + y * (cell + gap) + cell / 2;
-      points.push({ px, py });
+      points.push({ px, py, x, y });
     }
   }
 
   const pathD = "M " + points.map((pt) => `${pt.px.toFixed(2)} ${pt.py.toFixed(2)}`).join(" L ");
 
-  // Duration: longer grid => longer animation, but keep within nice bounds
   const durationSec = Math.min(26, Math.max(14, Math.round((W * 7) / 20)));
 
-  // Small set of “camp” markers: a few trees on high-activity cells
-  // Keep it sparse so it stays clean.
-  const maxTrees = 10;
-  highCells = highCells.slice(-maxTrees);
+  // Final cell (tent)
+  const end = points[points.length - 1];
+  const tentX = end.px;
+  const tentY = end.py;
 
-  const trees = highCells
-    .map(({ x, y }) => {
-      const cx = pad + x * (cell + gap) + cell / 2;
-      const cy = pad + y * (cell + gap) + cell / 2;
-      return `<text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="10" opacity="0.65">🌲</text>`;
-    })
-    .join("\n");
+  // Pick campfires positions
+  const fires = pickCampfires(highCells, 4).map((c, idx) => {
+    const cx = pad + c.x * (cell + gap) + cell / 2;
+    const cy = pad + c.y * (cell + gap) + cell / 2;
+    return { cx, cy, idx };
+  });
 
-  // Camper van icon (actually looks like a camper van: body, roof, window, door, wheels, headlight)
-  // Drawn around (0,0); we’ll offset via translate and animateMotion.
-  const camperVan = `
-    <g id="camper-van" transform="translate(-11,-9)">
-      <!-- Body -->
-      <path d="M3 12.2c0-2 1.6-3.6 3.6-3.6h9.2c1.5 0 2.8.9 3.4 2.3l1.1 2.4h2.7c1.5 0 2.8 1.2 2.8 2.8v2.8c0 1.2-1 2.2-2.2 2.2H24.8"
-            fill="${p.vanBody}" opacity="0.92" stroke="${p.vanStroke}" stroke-width="0.6" stroke-linejoin="round"/>
-      <!-- Roof / pop-top -->
-      <path d="M7.2 7.6h7.4c1.1 0 2 .9 2 2v1.1H5.2V9.6c0-1.1.9-2 2-2z"
-            fill="${p.vanAccent}" opacity="0.92" stroke="${p.vanStroke}" stroke-width="0.6" stroke-linejoin="round"/>
-      <!-- Window -->
-      <path d="M7.0 11.0h7.6c.6 0 1.1.5 1.1 1.1v2.1H5.9v-2.1c0-.6.5-1.1 1.1-1.1z"
-            fill="${p.vanWindow}" opacity="0.90"/>
-      <!-- Door line -->
-      <path d="M13.3 11.0v6.2" stroke="${p.vanStroke}" stroke-width="0.7" opacity="0.55"/>
-      <!-- Wheels -->
-      <circle cx="9.0" cy="20.4" r="2.4" fill="${p.bg}" opacity="0.96"/>
-      <circle cx="9.0" cy="20.4" r="1.5" fill="${p.vanBody}" opacity="0.92"/>
-      <circle cx="19.2" cy="20.4" r="2.4" fill="${p.bg}" opacity="0.96"/>
-      <circle cx="19.2" cy="20.4" r="1.5" fill="${p.vanBody}" opacity="0.92"/>
-      <!-- Headlight -->
-      <circle cx="24.8" cy="17.4" r="0.9" fill="${p.vanLight}" opacity="0.9"/>
+  // Hiker icon (simple, readable): head + body + backpack + trekking pole
+  const hikerIcon = `
+    <g id="hiker" transform="translate(-8,-10)" stroke="${p.hiker}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <circle cx="8" cy="4.5" r="2.1" fill="${p.hiker}" stroke="none" opacity="0.95"/>
+      <path d="M8 7.2v5.3" />
+      <path d="M8 10.2l-3.2 2.3" />
+      <path d="M8 10.2l3.1 2.0" />
+      <path d="M8 12.5l-2.6 5.2" />
+      <path d="M8 12.5l2.9 5.2" />
+      <!-- backpack -->
+      <path d="M10.6 8.8c1.3.5 2.0 1.6 2.0 3.0v2.3c0 .5-.4.9-.9.9h-1.1" />
+      <!-- trekking pole -->
+      <path d="M3.2 12.5l0 7.0" />
+      <path d="M2.5 19.5h1.4" />
     </g>
   `;
 
+  // Tent icon at the end (fixed)
+  const tentIcon = `
+    <g id="tent" transform="translate(${tentX.toFixed(2)} ${tentY.toFixed(2)}) translate(-11,-10)">
+      <path d="M2 18L11 3l9 15H2z" fill="${p.tentFill}" stroke="${p.tent}" stroke-width="1.2" stroke-linejoin="round"/>
+      <path d="M11 3v15" stroke="${p.tent}" stroke-width="1.2" opacity="0.75"/>
+      <path d="M9.6 18c.3-3.6 1.1-6.2 1.4-6.2s1.1 2.6 1.4 6.2" fill="none" stroke="${p.tent}" stroke-width="1.1" opacity="0.85"/>
+    </g>
+  `;
+
+  // Campfire + smoke
+  // Each fire has 3 smoke puffs rising & fading, looped.
+  function fireGroup(cx, cy, idx) {
+    const id = `fire${idx}`;
+    const delay = (idx * 0.4).toFixed(2);
+    return `
+      <g id="${id}" transform="translate(${cx.toFixed(2)} ${cy.toFixed(2)}) translate(-10,-8)">
+        <!-- logs -->
+        <path d="M3 15l6-3" stroke="${p.text}" stroke-width="1.2" opacity="0.35" stroke-linecap="round"/>
+        <path d="M17 15l-6-3" stroke="${p.text}" stroke-width="1.2" opacity="0.35" stroke-linecap="round"/>
+        <!-- flame -->
+        <path d="M10.5 5.5c1.2 1.7.9 3.1-.2 4.2.4-.2 1.5-.8 1.8-2 .6 1.2 1.1 3.4-.6 5.0-1.2 1.1-3.3 1.1-4.5-.2-1.3-1.4-1.1-3.7.6-5.5-.2 1.4.6 2.2 1.6 2.6-1.3-1.6-.8-2.9 1.3-4.1z"
+              fill="${p.fire2}" opacity="0.95"/>
+        <path d="M10.4 7.0c.7 1 .5 1.8-.1 2.4.3-.1.8-.4 1.0-1.1.4.7.6 2.0-.3 2.9-.7.6-1.9.6-2.6-.1-.7-.8-.6-2.1.3-3.2-.1.8.3 1.3.9 1.5-.7-.9-.4-1.6.8-2.4z"
+              fill="${p.fire1}" opacity="0.95"/>
+
+        <!-- smoke puffs -->
+        <g opacity="0.9">
+          ${[0, 1, 2]
+            .map((k) => {
+              const dx = k === 0 ? -2 : k === 1 ? 0 : 2;
+              const dur = (2.6 + k * 0.4).toFixed(2);
+              const begin = `${delay}s`;
+              return `
+                <circle cx="${10 + dx}" cy="4" r="${1.6 - k * 0.1}"
+                        fill="${p.smoke}" opacity="0.0">
+                  <animate attributeName="opacity" values="0;0.55;0" dur="${dur}s" begin="${begin}" repeatCount="indefinite"/>
+                  <animateTransform attributeName="transform" type="translate"
+                    values="0 0; ${dx * 0.6} -10" dur="${dur}s" begin="${begin}" repeatCount="indefinite"/>
+                </circle>
+              `;
+            })
+            .join("\n")}
+        </g>
+      </g>
+    `;
+  }
+
+  const firesSvg = fires.map((f) => fireGroup(f.cx, f.cy, f.idx)).join("\n");
+
+  // SVG
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"
-     viewBox="0 0 ${width} ${height}" role="img" aria-label="Camping camper van activity trail">
+     viewBox="0 0 ${width} ${height}" role="img" aria-label="Camping trail with hiker, campfires, and tent">
   <defs>
     <filter id="softGlow">
       <feGaussianBlur stdDeviation="1.6" result="b"/>
@@ -237,24 +300,29 @@ function svgForTheme(calendar, theme) {
     ${rects}
   </g>
 
-  <!-- Subtle trees (camp vibe) -->
-  <g>
-    ${trees}
-  </g>
+  <!-- Context path (subtle) -->
+  <path d="${pathD}" fill="none" stroke="${p.path}" stroke-width="1.6" stroke-linecap="round" />
 
-  <!-- Full snake path (very faint, just for context) -->
-  <path d="${pathD}" fill="none" stroke="${p.trail}" stroke-width="1.6" stroke-linecap="round" />
-
-  <!-- Moving highlight dash (the “animated trail”) -->
+  <!-- Animated highlight dash (snake-like vibe) -->
   <path d="${pathD}" fill="none" stroke="${p.dash}" stroke-width="2.6" stroke-linecap="round"
-        stroke-dasharray="16 120" filter="url(#softGlow)">
+        stroke-dasharray="18 140" filter="url(#softGlow)">
     <animate attributeName="stroke-dashoffset" values="0; -9000" dur="${durationSec}s" repeatCount="indefinite"/>
   </path>
 
-  <!-- Camper van moving along the snake path -->
+  <!-- Campfires with smoke -->
   <g>
-    ${camperVan}
-    <use href="#camper-van">
+    ${firesSvg}
+  </g>
+
+  <!-- Tent at the last cell -->
+  <g>
+    ${tentIcon}
+  </g>
+
+  <!-- Hiker moving along the snake path -->
+  <g>
+    ${hikerIcon}
+    <use href="#hiker">
       <animateMotion dur="${durationSec}s" repeatCount="indefinite" rotate="auto">
         <mpath href="#motionPath"/>
       </animateMotion>
@@ -270,7 +338,6 @@ function svgForTheme(calendar, theme) {
   </text>
 </svg>
 `;
-
   return svg;
 }
 
@@ -301,7 +368,7 @@ async function main() {
   fs.writeFileSync(path.join(OUT_DIR, "camping-caravan-dark.svg"), darkSvg, "utf8");
   fs.writeFileSync(path.join(OUT_DIR, "camping-caravan-light.svg"), lightSvg, "utf8");
 
-  console.log("Generated SVGs in dist/assets/");
+  console.log("Generated SVGs: dist/assets/");
 }
 
 main().catch((e) => {
